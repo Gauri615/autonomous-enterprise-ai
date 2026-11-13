@@ -27,15 +27,27 @@ XAMPP and phpMyAdmin describe the local development setup only. They do not sele
 | Port | `3306` | Default/expected MariaDB port; actual configured port is not yet verified |
 | Database | `autonomous_enterprise_ai` | Approved name; current selected database has not been confirmed from query output |
 | Engine/version | MariaDB 10.11.16 | Approved target; observed server output is not available |
-| Username | Not documented | Must be confirmed from the local setup; do not infer it |
-| Password | Not documented | Never record a password, token, or other secret in this file |
-| JDBC URL / application connection string | Not selected or verified | Do not construct one from unverified settings |
+| Username | `DB_USERNAME` environment variable | Must be set from the local setup; the value is not documented |
+| Password | `DB_PASSWORD` environment variable | Must be set locally; never record a password, token, or other secret here |
+| JDBC URL | `DB_URL` environment variable | Application default is `jdbc:mariadb://localhost:3306/autonomous_enterprise_ai`; port 3306 is expected but unverified |
 
-The phpMyAdmin URL, XAMPP installation path, application account, driver, and application connection configuration are not specified here.
+The application uses the MariaDB JDBC driver. The configured connection-property names are `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`; the username/password values and live connectivity have not been verified. The JDBC URL default records the expected local host, port, and database name, not a verified connection.
+
+### Environment-variable setup
+
+The backend's tracked `backend/enterprise-api/.env.example` contains placeholders only. Spring Boot does not load `.env` files automatically. In Windows PowerShell, supply the values in the terminal session before starting the application:
+
+```powershell
+$env:DB_URL = "jdbc:mariadb://localhost:3306/autonomous_enterprise_ai"
+$env:DB_USERNAME = "your-local-mariadb-username"
+$env:DB_PASSWORD = "your-local-mariadb-password"
+```
+
+Confirm the actual MariaDB port before using the example URL. Keep real credentials out of tracked files and do not commit a real `.env` file. Hibernate schema management is configured as `ddl-auto: none`; the application will not automatically create or update database tables.
 
 ## 4. Database Creation and Verification
 
-The user reports that database creation is complete. No database creation command is included or run by this documentation task.
+The user reports that database creation is complete. No database creation command or verification query was run by this task.
 
 The following read-only verification commands are documented for manual use:
 
@@ -43,13 +55,13 @@ The following read-only verification commands are documented for manual use:
 SELECT DATABASE(), VERSION();
 ```
 
-The user reports executing the verification query, but its output was not provided. Therefore, the selected database and observed server version cannot be confirmed from this document.
+The user reports executing the verification query, but its output was not provided. This task did not execute a database verification query or inspect database tables. Therefore, the selected database and observed server version cannot be confirmed from the output available here.
 
 ```sql
 SHOW TABLES;
 ```
 
-No output for `SHOW TABLES;` is recorded here. Table count, table existence, schema correctness, and migration status are not verified. These commands are documented only; no SQL was executed while preparing this file.
+No output for `SHOW TABLES;` is recorded here. Table count, table existence, schema correctness, and migration status are not verified. These commands are documented only; no SQL was executed while preparing this file. No tables or schema were verified or created by this task.
 
 ## 5. Planned Database Entities
 
@@ -97,7 +109,7 @@ These are conventions visible in the logical model; they do not establish final 
 
 ## 8. Migration Strategy
 
-No migration tool, physical schema, or migration has been selected or verified. ADR-0008 identifies Flyway and Liquibase as candidates only, subject to confirming compatible versions and drivers for the selected Spring Boot/Hibernate stack and MariaDB 10.11.16.
+No migration tool, physical schema, or migration has been selected or verified. ADR-0008 identifies Flyway and Liquibase as candidates only, subject to confirming compatible versions and drivers for the selected Spring Boot/Hibernate stack and MariaDB 10.11.16. The initial application explicitly disables Hibernate schema creation and updates (`spring.jpa.hibernate.ddl-auto: none`); no business tables or migrations were created or run by this task.
 
 The planned schema must use MariaDB-compatible DDL and preserve the logical relationships, tenant constraints, and audit requirements. Migration application and recovery should be tested against MariaDB 10.11.16 before use. phpMyAdmin is the management interface; manual phpMyAdmin changes are not a substitute for an approved, versioned migration process. No migration was created or run as part of this document task.
 
@@ -135,3 +147,4 @@ Any option must be evaluated for retrieval quality, tenant and user-permission f
 | Date | Change |
 |---|---|
 | 2026-11-13 | Created this setup reference for the Development Foundation phase. Recorded the approved MariaDB environment and user-reported database creation/query execution without inventing query output or schema verification. |
+| 2026-11-13 | Documented the Spring Boot datasource environment variables (`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`) and expected-but-unverified port 3306 default. Confirmed schema management is disabled and no tables/schema were verified or created by the backend foundation task. |

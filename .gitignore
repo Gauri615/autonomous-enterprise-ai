@@ -98,3 +98,6 @@ Desktop.ini
 /database-dumps/
 **/database-dumps/
 
+
+# Local VS Code workspace settings
+.vscode/
