@@ -4,18 +4,22 @@
 
 MariaDB 10.11.16 is the selected primary relational database for the Autonomous Enterprise AI System. The database is the planned source of truth for organization-scoped application records, knowledge metadata, workflow state, approvals, simulated tool outcomes, and audit events.
 
-This document records the approved local environment and the current verification state. It is not evidence that tables, migrations, application connectivity, or a production database have been configured. The logical model is documented in [DATABASE_ER_DIAGRAM.md](./DATABASE_ER_DIAGRAM.md).
+This document is the central source of truth for the verified local database setup and for decisions that remain open. Local runtime and health checks were verified on 2026-11-17; no production database is configured. The logical model is documented in [DATABASE_ER_DIAGRAM.md](./DATABASE_ER_DIAGRAM.md).
 
 ## 2. Confirmed Environment
 
 | Setting | Confirmed value | Status / note |
 |---|---|---|
-| Database engine | MariaDB | Selected primary relational database |
-| Database version | 10.11.16 | Approved target version |
-| Local environment | XAMPP | Selected local database environment; installed XAMPP version is not recorded here |
-| Management interface | phpMyAdmin | Selected management interface |
-| Database name | `autonomous_enterprise_ai` | Approved database name |
-| Database creation | Completed by the user | User-reported; not independently verified in this document |
+| Database engine/version | MariaDB 10.11.16 | Verified against the running server |
+| Local installation | XAMPP | Verified local development installation |
+| Management interface | phpMyAdmin | Local database management interface |
+| Database name | `autonomous_enterprise_ai` | Exists and is selected by the application connection |
+| Tables/schema | None | Verified: the database currently has no tables and no application schema |
+| Application account | `aea_app`@`localhost` | CLI login succeeded; `CURRENT_USER()` returned `aea_app@localhost` |
+| JDBC driver | MariaDB Connector/J 3.5.10 | Verified application dependency/runtime |
+| Backend runtime | Java 25, Spring Boot 4.1.2 | Verified application configuration/runtime |
+| Backend port | `8080` | Health endpoint verified at this port |
+| Hibernate schema management | `ddl-auto: none` | Verified configuration; the application does not create or update tables |
 
 XAMPP and phpMyAdmin describe the local development setup only. They do not select a production hosting or deployment architecture.
 
@@ -23,45 +27,76 @@ XAMPP and phpMyAdmin describe the local development setup only. They do not sele
 
 | Connection setting | Value | Verification status |
 |---|---|---|
-| Host | `localhost` | Provided for the local environment; application connectivity has not been independently tested |
-| Port | `3306` | Default/expected MariaDB port; actual configured port is not yet verified |
-| Database | `autonomous_enterprise_ai` | Approved name; current selected database has not been confirmed from query output |
-| Engine/version | MariaDB 10.11.16 | Approved target; observed server output is not available |
-| Username | `DB_USERNAME` environment variable | Must be set from the local setup; the value is not documented |
-| Password | `DB_PASSWORD` environment variable | Must be set locally; never record a password, token, or other secret here |
-| JDBC URL | `DB_URL` environment variable | Application default is `jdbc:mariadb://localhost:3306/autonomous_enterprise_ai`; port 3306 is expected but unverified |
+| Host | `localhost` | Verified application connection |
+| Port | `3306` | Verified XAMPP MariaDB port |
+| Database | `autonomous_enterprise_ai` | Verified by `DATABASE()` |
+| Engine/version | MariaDB 10.11.16 | Verified server |
+| Username | `aea_app` | Verified account; matched account is `aea_app@localhost` |
+| Password | `DB_PASSWORD` environment variable | Supplied locally; its value must never be recorded here |
+| JDBC URL | `DB_URL` environment variable | `jdbc:mariadb://localhost:3306/autonomous_enterprise_ai` |
+| Runtime privileges | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on `autonomous_enterprise_ai.*` | Verified; no `CREATE`, `ALTER`, `DROP`, or `GRANT OPTION` |
 
-The application uses the MariaDB JDBC driver. The configured connection-property names are `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`; the username/password values and live connectivity have not been verified. The JDBC URL default records the expected local host, port, and database name, not a verified connection.
+The Spring Boot datasource reads `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. `DB_URL` defaults to the URL above; the local launch instructions set it explicitly. The application connects through HikariCP and Hibernate initializes with `MariaDBDialect`.
 
 ### Environment-variable setup
 
-The backend's tracked `backend/enterprise-api/.env.example` contains placeholders only. Spring Boot does not load `.env` files automatically. In Windows PowerShell, supply the values in the terminal session before starting the application:
+The backend's tracked `backend/enterprise-api/.env.example` contains placeholders only. Spring Boot does not load `.env` files automatically. Set the values in the same Windows PowerShell session that launches Spring Boot:
 
 ```powershell
 $env:DB_URL = "jdbc:mariadb://localhost:3306/autonomous_enterprise_ai"
-$env:DB_USERNAME = "your-local-mariadb-username"
-$env:DB_PASSWORD = "your-local-mariadb-password"
+$env:DB_USERNAME = "aea_app"
+$env:DB_PASSWORD = $env:DB_APP_PASSWORD
+.\mvnw.cmd spring-boot:run
 ```
 
-Confirm the actual MariaDB port before using the example URL. Keep real credentials out of tracked files and do not commit a real `.env` file. Hibernate schema management is configured as `ddl-auto: none`; the application will not automatically create or update database tables.
+`DB_APP_PASSWORD` is generated locally and must match the password configured for `aea_app`. Generate it only when provisioning or rotating that account, not on every application launch. Load the existing value from a local secret store into the PowerShell session before assigning it to `DB_PASSWORD`. Never commit, print, or share `DB_APP_PASSWORD`; do not put real credentials in tracked files or a committed `.env` file. The variables set in a PowerShell session are inherited by processes started from that session and are not automatically available to separately launched IDE processes.
+
+For local account provisioning or password rotation, a 32-byte cryptographic value can be generated without printing it:
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+    $rng.GetBytes($bytes)
+    $env:DB_APP_PASSWORD = [Convert]::ToBase64String($bytes)
+}
+finally {
+    [Array]::Clear($bytes, 0, $bytes.Length)
+    $rng.Dispose()
+}
+```
+
+The generated value must be applied to the database account through the approved local account-provisioning process and stored in a local secret store for later launches. This documentation task does not provision or change database credentials.
 
 ## 4. Database Creation and Verification
 
-The user reports that database creation is complete. No database creation command or verification query was run by this task.
+The following setup and runtime results were verified for the local environment on 2026-11-17:
 
-The following read-only verification commands are documented for manual use:
+| Check | Result |
+|---|---|
+| MariaDB CLI login as `aea_app` | Succeeded |
+| `CURRENT_USER()` | `aea_app@localhost` |
+| `DATABASE()` | `autonomous_enterprise_ai` |
+| Database contents | No tables exist; no application schema has been created |
+| Runtime grants | Only `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `autonomous_enterprise_ai.*`; no DDL or grant-option privileges |
+| Spring Boot startup | Succeeded |
+| HikariCP | Established a MariaDB connection |
+| Hibernate | Initialized using `MariaDBDialect` |
+| `GET http://localhost:8080/actuator/health` | `status: UP`; liveness and readiness groups both `UP` |
 
 ```sql
 SELECT DATABASE(), VERSION();
 ```
 
-The user reports executing the verification query, but its output was not provided. This task did not execute a database verification query or inspect database tables. Therefore, the selected database and observed server version cannot be confirmed from the output available here.
+```sql
+SELECT CURRENT_USER();
+```
 
 ```sql
 SHOW TABLES;
 ```
 
-No output for `SHOW TABLES;` is recorded here. Table count, table existence, schema correctness, and migration status are not verified. These commands are documented only; no SQL was executed while preparing this file. No tables or schema were verified or created by this task.
+The read-only queries above can be used to recheck server/database selection and table state. The current verified result of `SHOW TABLES` is empty. No schema or tables have been created.
 
 ## 5. Planned Database Entities
 
@@ -109,9 +144,9 @@ These are conventions visible in the logical model; they do not establish final 
 
 ## 8. Migration Strategy
 
-No migration tool, physical schema, or migration has been selected or verified. ADR-0008 identifies Flyway and Liquibase as candidates only, subject to confirming compatible versions and drivers for the selected Spring Boot/Hibernate stack and MariaDB 10.11.16. The initial application explicitly disables Hibernate schema creation and updates (`spring.jpa.hibernate.ddl-auto: none`); no business tables or migrations were created or run by this task.
+No migration tool, physical schema, or migration has been selected or verified. ADR-0008 identifies Flyway and Liquibase as candidates only, subject to confirming compatible versions and drivers for the selected Spring Boot/Hibernate stack and MariaDB 10.11.16. Hibernate schema creation and updates are disabled (`spring.jpa.hibernate.ddl-auto: none`); no business tables or migrations have been created or run.
 
-The planned schema must use MariaDB-compatible DDL and preserve the logical relationships, tenant constraints, and audit requirements. Migration application and recovery should be tested against MariaDB 10.11.16 before use. phpMyAdmin is the management interface; manual phpMyAdmin changes are not a substitute for an approved, versioned migration process. No migration was created or run as part of this document task.
+The runtime user `aea_app@localhost` is deliberately limited to DML (`SELECT`, `INSERT`, `UPDATE`, and `DELETE`) on `autonomous_enterprise_ai.*`. It has no `CREATE`, `ALTER`, `DROP`, or `GRANT OPTION` privileges. Future schema creation or changes must be performed separately through an approved, versioned migration/DDL process using a distinct, appropriately scoped migration identity; do not expand the runtime user's privileges to make migrations run. The planned schema must use MariaDB-compatible DDL and preserve the logical relationships, tenant constraints, and audit requirements. Migration application and recovery should be tested against MariaDB 10.11.16 before use. phpMyAdmin is the management interface; manual changes are not a substitute for an approved, versioned migration process.
 
 ## 9. Backup and Recovery Considerations
 
@@ -128,11 +163,14 @@ Before any real organizational data or shared deployment is considered, define a
 - Require authorized human approval and execution-time policy revalidation for any enabled simulated action. MVP tool execution remains simulated-only; no live enterprise side effects are authorized.
 - Preserve attributable, organization-scoped audit events for material decisions and outcomes. Restrict audit access and minimize sensitive content.
 - Treat XAMPP/phpMyAdmin as local-development tooling; do not infer that either is secured or approved for production exposure.
-- Database users/roles, network restrictions, encryption, key management, audit retention, and operational access controls remain to be designed and verified. Do not claim these controls are implemented.
+- The runtime account and its DML-only grants are verified for local development. Its password is managed locally as `DB_APP_PASSWORD`; never commit, print, or share it.
+- Future migration identities/privileges, network restrictions, encryption, key management, audit retention, and operational access controls remain to be designed and verified. Do not claim these controls are implemented.
 
 ## 11. Vector Retrieval Decision Status
 
-Knowledge Agent retrieval technology remains **unresolved**. MariaDB 10.11.16 is the relational source of truth; it is not selected as a pgvector-compatible vector store, and no vector-search replacement is approved.
+**Verified:** MariaDB 10.11.16 is the relational source of truth. No vector retrieval technology is implemented or selected, and the current database has no tables.
+
+**Future decision:** Knowledge Agent retrieval technology remains **unresolved**. MariaDB is not selected as a pgvector-compatible vector store, and no vector-search replacement is approved.
 
 ADR-0008 compares the following options without selecting one:
 
@@ -146,5 +184,7 @@ Any option must be evaluated for retrieval quality, tenant and user-permission f
 
 | Date | Change |
 |---|---|
-| 2026-11-13 | Created this setup reference for the Development Foundation phase. Recorded the approved MariaDB environment and user-reported database creation/query execution without inventing query output or schema verification. |
-| 2026-11-13 | Documented the Spring Boot datasource environment variables (`DB_URL`, `DB_USERNAME`, `DB_PASSWORD`) and expected-but-unverified port 3306 default. Confirmed schema management is disabled and no tables/schema were verified or created by the backend foundation task. |
+| 2026-11-13 | Initial Development Foundation reference. At that time, database creation and query execution were user-reported; their output and schema state were not verified. |
+| 2026-11-13 | Recorded the datasource variable names and the then-unverified port 3306 expectation. Schema management was disabled; table/schema state was not yet verified. |
+| 2026-11-13 | Historical verification state only: the XAMPP executable, configured/listening port 3306, and TCP reachability were checked, but SQL verification and Spring Boot connectivity/startup/health were not yet verified. Also recorded the isolated H2 test and workspace clean-build filesystem results from that date. |
+| 2026-11-17 | Updated the verified setup: `aea_app@localhost` connects to `autonomous_enterprise_ai`; Spring Boot/Hikari/Hibernate startup and Actuator health are UP; the database has no tables; runtime grants are DML-only. Added same-session PowerShell configuration and local-only `DB_APP_PASSWORD` handling; kept schema migration privileges separate and vector retrieval undecided. |
