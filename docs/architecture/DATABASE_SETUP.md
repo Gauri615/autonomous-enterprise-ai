@@ -2,24 +2,26 @@
 
 ## 1. Database Overview
 
-MariaDB 10.11.16 is the selected primary relational database for the Autonomous Enterprise AI System. The database is the planned source of truth for organization-scoped application records, knowledge metadata, workflow state, approvals, simulated tool outcomes, and audit events.
+MariaDB 10.11.16 is the selected primary relational database target for the Autonomous Enterprise AI System. The database is the planned source of truth for organization-scoped application records, knowledge metadata, workflow state, approvals, simulated tool outcomes, and audit events.
 
-This document is the central source of truth for the verified local database setup and for decisions that remain open. Local runtime and health checks were verified on 2026-11-17; no production database is configured. The logical model is documented in [DATABASE_ER_DIAGRAM.md](./DATABASE_ER_DIAGRAM.md).
+This document is the central source of truth for reported local database setup details and decisions that remain open. Local runtime and health checks were reported as verified on 2026-11-17, but were not re-verified in this implementation task. The current XAMPP server version, `innodb_page_size`, and SQL modes remain unverified because a database connection could not be established. No production database is configured. The logical model is documented in [DATABASE_ER_DIAGRAM.md](./DATABASE_ER_DIAGRAM.md).
 
 ## 2. Confirmed Environment
 
-| Setting | Confirmed value | Status / note |
+| Setting | Selected or previously reported value | Status / note |
 |---|---|---|
-| Database engine/version | MariaDB 10.11.16 | Verified against the running server |
-| Local installation | XAMPP | Verified local development installation |
-| Management interface | phpMyAdmin | Local database management interface |
-| Database name | `autonomous_enterprise_ai` | Exists and is selected by the application connection |
-| Tables/schema | None | Verified: the database currently has no tables and no application schema |
-| Application account | `aea_app`@`localhost` | CLI login succeeded; `CURRENT_USER()` returned `aea_app@localhost` |
-| JDBC driver | MariaDB Connector/J 3.5.10 | Verified application dependency/runtime |
-| Backend runtime | Java 25, Spring Boot 4.1.2 | Verified application configuration/runtime |
-| Backend port | `8080` | Health endpoint verified at this port |
-| Hibernate schema management | `ddl-auto: none` | Verified configuration; the application does not create or update tables |
+| Database engine/version | MariaDB 10.11.16 | Selected target; current XAMPP server version was not verified in this task |
+| Local installation | XAMPP | Previously reported local development installation; not re-verified |
+| Management interface | phpMyAdmin | Previously reported local management interface; not re-verified |
+| Database name | `autonomous_enterprise_ai` | Previously reported; not re-verified |
+| Tables/schema | No migration was applied by this task | Current database contents were not checked |
+| Application account | Previously reported local runtime account | Account and grants were not re-verified |
+| JDBC driver | MariaDB Connector/J 3.5.10 | Configured application dependency; no database connection was made |
+| Backend runtime | Java 25, Spring Boot 4.1.2 | Configured project versions |
+| Backend port | `8080` | Previously reported health endpoint port; not re-verified |
+| Hibernate schema management | `ddl-auto: none` | Configured; the application does not create or update tables |
+
+The 2026-11-17 connection, server-version, grant, empty-schema, and health results below are historical reports, not current runtime evidence. This task did not connect to XAMPP or execute SQL/DDL. In particular, do not treat MariaDB runtime compatibility as proven.
 
 XAMPP and phpMyAdmin describe the local development setup only. They do not select a production hosting or deployment architecture.
 
@@ -27,16 +29,16 @@ XAMPP and phpMyAdmin describe the local development setup only. They do not sele
 
 | Connection setting | Value | Verification status |
 |---|---|---|
-| Host | `localhost` | Verified application connection |
-| Port | `3306` | Verified XAMPP MariaDB port |
-| Database | `autonomous_enterprise_ai` | Verified by `DATABASE()` |
-| Engine/version | MariaDB 10.11.16 | Verified server |
-| Username | `aea_app` | Verified account; matched account is `aea_app@localhost` |
+| Host | `localhost` | Previously reported; not re-verified |
+| Port | `3306` | Previously reported XAMPP MariaDB port; not re-verified |
+| Database | `autonomous_enterprise_ai` | Previously reported by `DATABASE()`; not re-verified |
+| Engine/version | MariaDB 10.11.16 | Selected target; current server version not verified |
+| Username | Previously reported local application account | Not re-verified in this task |
 | Password | `DB_PASSWORD` environment variable | Supplied locally; its value must never be recorded here |
 | JDBC URL | `DB_URL` environment variable | `jdbc:mariadb://localhost:3306/autonomous_enterprise_ai` |
-| Runtime privileges | `SELECT`, `INSERT`, `UPDATE`, `DELETE` on `autonomous_enterprise_ai.*` | Verified; no `CREATE`, `ALTER`, `DROP`, or `GRANT OPTION` |
+| Runtime privileges | Previously reported as DML-only on the application database | Not re-verified in this task |
 
-The Spring Boot datasource reads `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. `DB_URL` defaults to the URL above; the local launch instructions set it explicitly. The application connects through HikariCP and Hibernate initializes with `MariaDBDialect`.
+The Spring Boot datasource reads `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. `DB_URL` defaults to the URL above; the local launch instructions set it explicitly. The application is configured to use HikariCP and `MariaDBDialect`; no current database initialization was observed in this task.
 
 ### Environment-variable setup
 
@@ -70,7 +72,7 @@ The generated value must be applied to the database account through the approved
 
 ## 4. Database Creation and Verification
 
-The following setup and runtime results were verified for the local environment on 2026-11-17:
+The following are historical setup and runtime results reported for 2026-11-17. They were not re-verified during this task, which did not connect to the database:
 
 | Check | Result |
 |---|---|
@@ -96,32 +98,23 @@ SELECT CURRENT_USER();
 SHOW TABLES;
 ```
 
-The read-only queries above can be used to recheck server/database selection and table state. The current verified result of `SHOW TABLES` is empty. No schema or tables have been created.
+The read-only queries above can be used to recheck server/database selection and table state. An empty table list was reported on 2026-11-17; the current result is unknown. The V1 migration file now exists but was not applied in this task, so do not infer current schema contents from the historical check.
 
 ## 5. Planned Database Entities
 
-The following are logical entities in the planned model, not verified database tables:
+The following inventory is the canonical logical model in [DATABASE_MODEL_RECONCILIATION.md](./DATABASE_MODEL_RECONCILIATION.md). Most of these entities are not implemented as persistence; only the four first-slice tables described in Section 8 have entity/repository code and a migration file.
 
-| Entity | Purpose / scope |
+| Logical group | Canonical entities and scope |
 |---|---|
-| Organization | Tenant boundary and ownership root |
-| User | Controlled demo identity associated with an organization |
-| Role | Organization-scoped role definition |
-| UserRole | User-to-role assignment within the same organization |
-| Ticket | Internal IT support request and workflow outcome; not an external service-desk ticket |
-| TicketComment | User, analyst, or system-authored note associated with a ticket |
-| KnowledgeDocument | Curated source metadata and permission attributes |
-| KnowledgeChunk | Searchable document segment and source metadata |
-| AgentDefinition | Global or organization-scoped workflow/agent metadata |
-| AgentRun | Bounded, request-correlated workflow execution |
-| AgentEvent | Traceable event within an agent run |
-| ToolDefinition | Global or organization-scoped metadata for an allow-listed simulation |
-| ApprovalRequest | Proposal context and human decision lifecycle |
-| ToolExecution | Attempt and outcome record for an approved simulated action |
-| AuditEvent | Attributable, correlated record of material workflow/security events |
-| Feedback | Optional employee evaluation; MVP-Should, not mandatory |
+| Identity and RBAC | `Organization` (tenant root); global `IdentityPrincipal` and `ExternalIdentity`; tenant `OrganizationMembership`, `Role`, `MembershipRole`, and `RolePermission`; global `PermissionCatalog`. |
+| Support | `SupportRequest` (internal IT request, not an external service-desk ticket) and `RequestMessage`. |
+| Knowledge | `KnowledgeDocument`, `KnowledgeChunk`, `KnowledgeDocumentRoleGrant`, `KnowledgeDocumentUserGrant`, and `MessageSource`. |
+| Agents | Global `AgentDefinition`; tenant `OrganizationAgentConfig`; tenant `AgentRun` and `AgentEvent`. |
+| Tools and approval | Global `ToolDefinition`; tenant `OrganizationToolPolicy`, `ApprovalRequest`, `ToolExecution`, and `ToolExecutionAttempt`. |
+| Audit | `AuditEvent`, which supports tenant and platform scope with the canonical actor-kind rules. |
+| Optional evaluation | `ResponseFeedback`, `EvaluationRun`, and `EvaluationResult`; all remain optional and outside the required MVP persistence foundation. |
 
-The logical model does not add a separate embedding entity or vector index. Feedback and organization-level configuration are conditional/optional capabilities.
+Global catalogs are separate from tenant configuration and policy; do not model global and tenant definitions with nullable `organization_id` on one catalog row. The logical model does not add a separate embedding entity or vector index. Database schema presence remains unverified.
 
 ## 6. Schema and Relationship Reference
 
@@ -131,22 +124,22 @@ Refer to [DATABASE_ER_DIAGRAM.md](./DATABASE_ER_DIAGRAM.md) for the logical enti
 - InnoDB is required for tables whose transaction and foreign-key enforcement is required; the actual table engine and DDL have not been verified.
 - `Organization` is the tenant root. Tenant-owned records carry an `organization_id`.
 - Relationships between tenant-owned records use organization-aware foreign keys, including composite `(organization_id, entity_id)` references where specified, to prevent cross-organization references.
-- `AgentDefinition` and `ToolDefinition` may be global configuration or organization-scoped; the global-versus-tenant uniqueness implementation remains open.
+- Global `AgentDefinition` and `ToolDefinition` catalogs are separate from tenant `OrganizationAgentConfig` and `OrganizationToolPolicy`; their recommended lifecycle and implementation status are described in the canonical model.
 - Human approval, simulated execution, and audit records must retain their required linkage and attribution.
 
-This is a logical design, not a physical schema. No table definitions, indexes, constraints, or migrations are verified as present in MariaDB.
+The first persistence slice has entity/repository code and a versioned migration file defining only `Organization`, `IdentityPrincipal`, `ExternalIdentity`, and `OrganizationMembership`; V1 was not applied in this task. No table definitions, indexes, or constraints are verified as present in MariaDB.
 
 ## 7. Naming Conventions
 
 The ER document uses PascalCase logical entity names (for example, `KnowledgeDocument`) and lowercase `snake_case` attribute names (for example, `organization_id` and `created_at`). Foreign-key attribute names generally use the referenced identifier with an `_id` suffix.
 
-These are conventions visible in the logical model; they do not establish final physical table names or a committed DDL naming standard. Singular versus plural table names, identifier quoting/case behavior, physical UUID representation, and exact column types remain to be confirmed in the schema/migration design.
+The first-slice physical names and representations are selected in the reconciliation and migration strategy documents and encoded in V1; other entities remain subject to the canonical model and later physical design. No database-level behavior has been verified by applying the migration.
 
 ## 8. Migration Strategy
 
-No migration tool, physical schema, or migration has been selected or verified. ADR-0008 identifies Flyway and Liquibase as candidates only, subject to confirming compatible versions and drivers for the selected Spring Boot/Hibernate stack and MariaDB 10.11.16. Hibernate schema creation and updates are disabled (`spring.jpa.hibernate.ddl-auto: none`); no business tables or migrations have been created or run.
+Flyway is selected as an explicitly invoked Maven plugin, with its Flyway/MariaDB modules isolated under the plugin and absent from the application runtime dependencies. The configured migration location is `backend/enterprise-api/src/main/resources/db/migration`; the committed V1 file creates only `organizations`, `identity_principals`, `external_identities`, and `organization_memberships`. V1 has not been applied, and no tables, constraints, or MariaDB runtime behavior are claimed as verified. Hibernate schema creation and updates remain disabled (`spring.jpa.hibernate.ddl-auto: none`). See [DATABASE_MIGRATION_STRATEGY.md](./DATABASE_MIGRATION_STRATEGY.md) for the plugin configuration, implemented test scope, and remaining verification gates.
 
-The runtime user `aea_app@localhost` is deliberately limited to DML (`SELECT`, `INSERT`, `UPDATE`, and `DELETE`) on `autonomous_enterprise_ai.*`. It has no `CREATE`, `ALTER`, `DROP`, or `GRANT OPTION` privileges. Future schema creation or changes must be performed separately through an approved, versioned migration/DDL process using a distinct, appropriately scoped migration identity; do not expand the runtime user's privileges to make migrations run. The planned schema must use MariaDB-compatible DDL and preserve the logical relationships, tenant constraints, and audit requirements. Migration application and recovery should be tested against MariaDB 10.11.16 before use. phpMyAdmin is the management interface; manual changes are not a substitute for an approved, versioned migration process.
+The runtime account was previously reported as DML-only (`SELECT`, `INSERT`, `UPDATE`, and `DELETE`) on the application database, without DDL or grant-option privileges; those grants were not re-verified in this task. Future schema creation or changes must be performed separately through an approved, versioned migration/DDL process using a distinct, appropriately scoped migration identity; do not expand the runtime account's privileges to make migrations run. The planned schema must use MariaDB-compatible DDL and preserve the logical relationships, tenant constraints, and audit requirements. Migration application and recovery should be tested against MariaDB 10.11.16 before use. phpMyAdmin is the previously reported management interface; manual changes are not a substitute for an approved, versioned migration process.
 
 ## 9. Backup and Recovery Considerations
 
@@ -163,12 +156,12 @@ Before any real organizational data or shared deployment is considered, define a
 - Require authorized human approval and execution-time policy revalidation for any enabled simulated action. MVP tool execution remains simulated-only; no live enterprise side effects are authorized.
 - Preserve attributable, organization-scoped audit events for material decisions and outcomes. Restrict audit access and minimize sensitive content.
 - Treat XAMPP/phpMyAdmin as local-development tooling; do not infer that either is secured or approved for production exposure.
-- The runtime account and its DML-only grants are verified for local development. Its password is managed locally as `DB_APP_PASSWORD`; never commit, print, or share it.
+- The runtime account and its DML-only grants were previously reported for local development but were not re-verified in this task. Any local password remains secret and must never be committed, printed, or shared.
 - Future migration identities/privileges, network restrictions, encryption, key management, audit retention, and operational access controls remain to be designed and verified. Do not claim these controls are implemented.
 
 ## 11. Vector Retrieval Decision Status
 
-**Verified:** MariaDB 10.11.16 is the relational source of truth. No vector retrieval technology is implemented or selected, and the current database has no tables.
+**Selected:** MariaDB 10.11.16 is the relational database target. The current XAMPP server version and current database contents were not verified in this task. No vector retrieval technology is implemented or selected.
 
 **Future decision:** Knowledge Agent retrieval technology remains **unresolved**. MariaDB is not selected as a pgvector-compatible vector store, and no vector-search replacement is approved.
 
@@ -188,3 +181,4 @@ Any option must be evaluated for retrieval quality, tenant and user-permission f
 | 2026-11-13 | Recorded the datasource variable names and the then-unverified port 3306 expectation. Schema management was disabled; table/schema state was not yet verified. |
 | 2026-11-13 | Historical verification state only: the XAMPP executable, configured/listening port 3306, and TCP reachability were checked, but SQL verification and Spring Boot connectivity/startup/health were not yet verified. Also recorded the isolated H2 test and workspace clean-build filesystem results from that date. |
 | 2026-11-17 | Updated the verified setup: `aea_app@localhost` connects to `autonomous_enterprise_ai`; Spring Boot/Hikari/Hibernate startup and Actuator health are UP; the database has no tables; runtime grants are DML-only. Added same-session PowerShell configuration and local-only `DB_APP_PASSWORD` handling; kept schema migration privileges separate and vector retrieval undecided. |
+| 2026-11-21 | Added the first unapplied V1 identity-foundation migration and recorded its Flyway plugin-only configuration. This task made no database connection; the current XAMPP server version, `innodb_page_size`, SQL modes, and database contents remain unverified. |

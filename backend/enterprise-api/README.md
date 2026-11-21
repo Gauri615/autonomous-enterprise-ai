@@ -2,7 +2,7 @@
 
 The authoritative Java business API for the Autonomous Enterprise AI System. It is the intended boundary for business policy and authorization; AI-generated content is not authorization, and the Python AI service must not execute business tools or bypass this API.
 
-This is the initial application foundation only. It currently provides Spring Boot Actuator health status and an application-context test; no business workflows or business endpoints are implemented.
+The application foundation provides Spring Boot Actuator health status and the first persistence slice for Organization, IdentityPrincipal, ExternalIdentity, and OrganizationMembership. Business workflows, authentication, and business endpoints are not implemented.
 
 ## Technology
 
@@ -17,10 +17,10 @@ Spring Initializr generated the Maven project and wrapper with the selected Spri
 ## Prerequisites
 
 - JDK 25; ensure `JAVA_HOME` and `PATH` select the JDK 25 installation.
-- MariaDB 10.11.16 from the local XAMPP installation, managed with phpMyAdmin.
-- The `autonomous_enterprise_ai` database and least-privilege `aea_app@localhost` runtime account.
+- MariaDB 10.11.16 is the selected target; the current XAMPP server version was not re-verified in this task.
+- The previously reported `autonomous_enterprise_ai` database and least-privilege runtime account; neither was re-verified in this task.
 
-The verified local connection is `localhost:3306/autonomous_enterprise_ai`. MariaDB CLI login as `aea_app` and Spring Boot connectivity both succeeded. See the [database setup reference](../../docs/architecture/DATABASE_SETUP.md) for verified grants, environment setup, and future migration requirements.
+The setup document records a previously verified local connection, but this task did not re-verify the current XAMPP server or database. See the [database setup reference](../../docs/architecture/DATABASE_SETUP.md) for verification status and configuration.
 
 ## Configure database environment variables
 
@@ -38,7 +38,7 @@ $env:DB_PASSWORD = $env:DB_APP_PASSWORD
 .\mvnw.cmd spring-boot:run
 ```
 
-[`.env.example`](./.env.example) contains placeholders only. Spring Boot does not load `.env` files automatically; do not commit a real `.env` file or put credentials in source control. The runtime account has only `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `autonomous_enterprise_ai.*`. JPA uses `ddl-auto: none`; the application cannot create or modify the schema. Keep future DDL/migrations separate from the runtime identity; details are in the [database setup reference](../../docs/architecture/DATABASE_SETUP.md).
+[`.env.example`](./.env.example) contains placeholders only. Spring Boot does not load `.env` files automatically; do not commit a real `.env` file or put credentials in source control. DML-only runtime privileges were previously reported but were not re-verified in this task. JPA uses `ddl-auto: none`; the application cannot create or modify the schema. Keep DDL/migrations separate from the runtime identity; details are in the [database setup reference](../../docs/architecture/DATABASE_SETUP.md).
 
 ## Maven Wrapper (Windows PowerShell)
 
@@ -59,7 +59,7 @@ The wrapper downloads its pinned Maven distribution on first use; a separate Mav
 .\mvnw.cmd test
 ```
 
-The context test activates the `test` profile and uses an in-memory H2 database. It does not connect to MariaDB.
+Repository tests use an isolated in-memory H2 schema and do not connect to MariaDB. MariaDB integration tests are disabled unless explicitly enabled with test-specific connection settings; they were not run as part of this task.
 
 ## Start the application
 
@@ -69,13 +69,13 @@ Set the database environment variables above in this PowerShell session, ensure 
 .\mvnw.cmd spring-boot:run
 ```
 
-The Actuator health endpoint is `http://localhost:8080/actuator/health`. The verified local application started successfully, HikariCP established a MariaDB connection, Hibernate initialized with `MariaDBDialect`, and the health endpoint returned `UP` with liveness and readiness both `UP`. Only the health endpoint is exposed; health details and components are not exposed.
+The Actuator health endpoint is `http://localhost:8080/actuator/health`. A successful local startup and health check were previously reported, but were not re-verified in this task. Only the health endpoint is exposed; health details and components are not exposed.
 
 ## Current limitations
 
 - Authentication, authorization policies, tenant context, business modules, API contracts, and business endpoints are not implemented.
 - No tickets, approvals, audit workflows, AI integration, retrieval, or tool execution are implemented.
-- The database currently has no tables or application schema. There are no migrations; Hibernate schema creation and updates are disabled.
-- Runtime permissions are DML-only. Future schema creation and migration privileges/processes are not yet selected or configured.
+- The V1 identity-foundation migration exists at `src/main/resources/db/migration` but was not applied; the current database schema state is unverified. Hibernate schema creation and updates are disabled.
+- Flyway is configured only as an explicitly invoked Maven plugin; it is absent from application runtime dependencies and does not run at application startup. Migration account provisioning and privileges remain unverified.
 - The Knowledge Agent's vector retrieval technology remains undecided; no vector store or retrieval implementation is configured.
 - MariaDB credentials must be supplied locally. No real credentials are included here.
