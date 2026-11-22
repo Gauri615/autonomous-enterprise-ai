@@ -18,16 +18,16 @@ This document defines proposed logical contracts for review and implementation p
 - Give the React + TypeScript frontend one authoritative public business API: Java 21+ / Spring Boot.
 - Keep Python FastAPI and LangGraph behind a private, bounded service-to-service contract.
 - Make request, error, status, authorization, approval, and audit semantics consistent and testable.
-- Bind all protected operations to trusted server-resolved user and organization context.
+- Bind all protected operations to trusted server-resolved identity, organization, and membership context.
 - Distinguish model recommendations from backend policy decisions, human decisions, and confirmed simulated results.
-- Support the approved MVP with internal support tickets and allow-listed simulated actions only.
+- Support the approved MVP with internal `SupportRequest` records and allow-listed simulated actions only.
 - Avoid choosing an unresolved authentication mechanism, LLM provider, endpoint wire convention, or deployment topology without an explicit decision.
 
 ## 3. API Architecture and Responsibilities
 
 | Boundary | Responsibility | Must not do |
 |---|---|---|
-| React + Axios -> Spring Boot | All browser-facing operations: authentication entry point, users, tickets/comments, analysis requests/status, knowledge reads, approvals, simulations, audit review, and bounded reporting. | Call FastAPI, LangGraph, MariaDB, a retrieval component, or tool adapters directly. |
+| React + Axios -> Spring Boot | All browser-facing operations: authentication entry point, identities/memberships, support requests/messages, analysis requests/status, knowledge reads, approvals, simulations, audit review, and bounded reporting. | Call FastAPI, LangGraph, MariaDB, a retrieval component, or tool adapters directly. |
 | Spring Boot API | Authoritative identity context, tenant scope, deterministic authorization, request state, validation, policy evaluation, approvals, simulated execution, persistence, and audit decisions. | Treat AI output as authorization or report unconfirmed success. |
 | Spring Boot -> FastAPI | Internal, bounded AI request with minimum necessary trusted context, eligible knowledge, correlation, and deadline. Validate all response data. | Delegate business state or execution authorization. |
 | FastAPI -> LangGraph | Run only configured request-scoped workflow steps. | Grant access, approve actions, or call tools. |
@@ -42,13 +42,14 @@ Only Spring Boot may invoke a tool adapter. FastAPI and LangGraph have no tool-e
 - Proposed public API is JSON over HTTPS in a deployed environment; exact local transport is deployment-specific.
 - UTF-8 JSON uses `camelCase`; timestamps are RFC 3339 UTC strings.
 - IDs are opaque UUID strings. Possession of an ID grants no access.
-- Public resource names use plural nouns; ticket is the internal support request, not an external service-desk record.
+- Public resource names use plural nouns. `/api/v1/support-requests` is the canonical public route naming convention for the tenant-owned `SupportRequest` resource.
 - Public operations use `/api/v1`; internal AI processing uses a separately protected `/internal/v1` namespace.
 - Responses and errors use the common envelopes in Sections 9–10. `204 No Content` is used only when no representation is returned.
 - Unknown fields are rejected on security-sensitive request bodies unless a specific contract explicitly allows an extension field.
-- All organization, user, role, document, proposal, and audit filters are derived or checked server-side.
+- All organization, membership, role, document, proposal, and audit filters are derived or checked server-side.
 - `Location` may identify a newly created resource; it is not proof of authorization.
-- A request body MUST NOT include an authoritative `organizationId`, acting `userId`, role, approval state, or policy outcome.
+- A request body MUST NOT include an authoritative `organizationId`, acting `identityPrincipalId`, acting `membershipId`, role, approval state, or policy outcome.
+- `IdentityPrincipal` is the global identity. `ExternalIdentity` is the verified provider issuer/subject pair linked to that principal. `OrganizationMembership` is the organization-scoped actor and must be used for tenant-owned operations.
 
 ## 5. Base URLs and Versioning
 
@@ -63,13 +64,17 @@ Version in the path is the public contract major version. Additive optional resp
 
 ## 6. Authentication Contract
 
+The authentication and authorization mechanisms described in this contract are proposed and are not implemented by the current Spring Boot foundation. Protected endpoints must not be exposed before a verified OIDC or approved session mechanism and trusted server-side identity-context resolution are implemented.
+
 The SRS does not select a login protocol, identity provider, password flow, OAuth/OIDC profile, JWT issuer, cookie/session approach, or token lifecycle. Therefore:
 
 - The login endpoint below is an abstract adapter contract for controlled demo identities; its `authentication` object is mechanism-specific and must be fixed in an architecture decision before implementation.
 - Do not infer password authentication from the endpoint or sample. Never persist or log plaintext passwords or credentials.
 - JWT-based authentication is an initial direction only, subject to the documented decision. If bearer JWT is selected, the API validates issuer/signature, expiry, and required claims; values are not trusted from request body fields.
 - The authentication mechanism returns/establishes whatever client credential/session form is eventually approved. This document deliberately does not prescribe a token JSON response or cookie name.
-- Every protected request resolves the user and organization on the server. Missing/invalid identity fails closed.
+- Every protected request resolves the verified external identity, global `IdentityPrincipal`, organization, and `OrganizationMembership` on the server. Missing or invalid identity, principal, organization, membership, or authorization fails closed.
+- Exact OIDC issuer and opaque, case-sensitive subject matching is required. Identity must not be inferred from email or request fields.
+- Platform permissions and organization permissions are separate. A membership or role in one organization grants no authority in another organization.
 - The logout contract invalidates the current mechanism's client session/credential only to the extent that the selected mechanism supports invalidation; exact lifecycle is open.
 
 ## 7. Authorization and RBAC
@@ -78,8 +83,8 @@ Logical permissions below describe intended policy scopes; they are not fixed ro
 
 | Capability | Intended actor | Server-side rule |
 |---|---|---|
-| Own ticket create/read/comment/escalation | Employee | Authenticated user; same organization and permitted record ownership. |
-| Scoped ticket/user review | IT support analyst | Explicit assigned role, organization, resource, and action scope. |
+| Own support request create/read/message/escalation | Employee | Authenticated active membership; same organization and permitted record ownership. |
+| Scoped support request/membership review | IT support analyst | Explicit `MembershipRole`, organization, resource, and action scope. |
 | Proposal review/decision | Authorized approver | Explicit reviewer authorization for the proposal's organization and action. |
 | Knowledge curation | Organization administrator | Only when optional admin configuration is enabled; organization-scoped. |
 | Audit read | Governance/audit reviewer | Explicit audit-read permission; administrator status alone is insufficient. |
@@ -132,43 +137,45 @@ For `202 Accepted`, `data` contains the accepted resource/run reference and its 
 
 ## 10. Error Response Standards
 
-Errors use a stable envelope:
+Errors use the stable flat envelope implemented by `ApiErrorResponse`:
 
 ```json
 {
-  "error": {
-    "code": "VALIDATION_FAILED",
-    "message": "One or more request fields are invalid.",
-    "correlationId": "c0a80123-4567-489a-9abc-123456789abc",
-    "details": [
-      {
-        "field": "description",
-        "issue": "must not be blank"
-      }
-    ],
-    "retryable": false
-  }
+  "timestamp": "2026-11-13T07:55:00Z",
+  "status": 400,
+  "errorCode": "VALIDATION_FAILED",
+  "message": "Request validation failed.",
+  "path": "/api/v1/support-requests",
+  "correlationId": "c0a80123-4567-489a-9abc-123456789abc",
+  "fieldErrors": [
+    {
+      "field": "description",
+      "message": "must not be blank"
+    }
+  ]
 }
 ```
+
+This is the existing implementation contract and the source of truth. The previous nested `error`/`details` shape is not used. The implementation exposes `timestamp`, `status`, `errorCode`, `message`, `path`, `correlationId`, and `fieldErrors[]`; no second or aliased envelope will be added.
 
 Do not disclose stack traces, SQL, prompts, secrets, internal hostnames, unauthorized resource existence, or provider credentials. Expected status mapping:
 
 | HTTP | Use |
 |---:|---|
-| 400 | Malformed JSON, invalid query/path syntax, unsupported fields, or validation errors. |
-| 401 | Missing/invalid authentication. |
-| 403 | Authenticated caller lacks the required capability; use 404 where policy requires concealing resource existence. |
-| 404 | Resource not found or intentionally concealed by authorization policy. |
-| 409 | State conflict, stale proposal, duplicate/idempotency conflict, invalid transition, or already-decided approval. |
+| 400 | Malformed JSON, invalid query/path syntax, unsupported fields, or validation errors. Return `VALIDATION_FAILED` or another existing 400-specific error code. |
+| 401 | Missing or invalid OIDC/session authentication. Return `UNAUTHORIZED` when implemented. No principal or organization data is inferred in this state. |
+| 403 | Authenticated caller lacks the required platform or organization capability. Return `FORBIDDEN`; use a concealed 404 only where policy requires hiding resource existence. |
+| 404 | Resource not found or intentionally concealed by authorization policy. Return `RESOURCE_NOT_FOUND`. |
+| 409 | State conflict, uniqueness conflict, duplicate/idempotency conflict, invalid lifecycle transition, stale proposal, or already-decided approval. Return `CONFLICT` when implemented. |
 | 413 | Request exceeds documented size limit. |
 | 415 | Unsupported media type. |
 | 422 | Semantically invalid request when the implementation distinguishes it from 400; use consistently. |
 | 429 | Rate limit exceeded; return `Retry-After` if meaningful. |
-| 500 | Unexpected internal failure with safe message. |
+| 500 | Unexpected internal failure with safe message. Return `INTERNAL_SERVER_ERROR` and never disclose stack traces or persistence/provider details. |
 | 503 | Required service unavailable or deadline expired before successful processing; truthful state only. |
 | 504 | Upstream AI/internal processing deadline exceeded; no success or execution implied. |
 
-Validation errors do not retry. Authorization/policy denials are not retryable. If a ticket was persisted before AI failure, return its current persisted state rather than a success-shaped answer.
+Validation errors do not retry. Authorization/policy denials are not retryable. If a support request was persisted before AI failure, return its current persisted state rather than a success-shaped answer.
 
 ## 11. Authentication API Contracts
 
@@ -181,7 +188,7 @@ Validation errors do not retry. Authorization/policy denials are not retryable. 
 | Required permission | None before login. |
 | Path/query | None. |
 | Request JSON | Mechanism-neutral envelope; `authentication` shape is intentionally unresolved. |
-| Success | `200 OK`, common envelope with authenticated user/profile and permitted capability summary. The selected mechanism establishes its session/credential without this contract exposing a provider or token format. |
+| Success | `200 OK`, common envelope with the authenticated principal/membership profile and permitted capability summary. The selected mechanism establishes its session/credential without this contract exposing a provider or token format. |
 | Errors | `400`, `401`, `429`, `500`, `503`. Do not distinguish unknown identity if that would disclose account state. |
 | Validation | Require configured authentication fields; reject client-supplied organization/role as authority; never log `authentication` values. |
 | Traceability | SRS-AUTH-001–006, SRS-AUTHZ-001; UC-001. |
@@ -200,12 +207,14 @@ Validation errors do not retry. Authorization/policy denials are not retryable. 
 {
   "data": {
     "authenticated": true,
-    "user": {
-      "userId": "11111111-1111-4111-8111-111111111111",
+    "identity": {
+      "identityPrincipalId": "11111111-1111-4111-8111-111111111111",
+      "organizationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "membershipId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "displayName": "Demo Employee",
       "roles": ["employee"]
     },
-    "capabilities": ["tickets:create", "tickets:read:own"]
+    "capabilities": ["support-requests:create", "support-requests:read:own"]
   },
   "meta": {
     "correlationId": "c0a80123-4567-489a-9abc-123456789abc"
@@ -224,29 +233,31 @@ Validation errors do not retry. Authorization/policy denials are not retryable. 
 | Request body | Empty; no JSON body. |
 | Success | `204 No Content`. |
 | Errors | `401`, `500`, `503`; no protected details. |
-| Validation | Only current caller session is targeted; no user/session ID may select another user's session. |
+| Validation | Only the current caller session is targeted; no principal/session ID may select another principal's session. |
 | Traceability | SRS-AUTH-001, SRS-AUTH-004; UC-001. |
 
-### GET `/api/v1/users/me`
+### GET `/api/v1/identity/me`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | Return the authenticated user's allowed profile and capabilities. |
+| Purpose | Return the authenticated principal's allowed organization-scoped profile and capabilities. |
 | Authentication | Required. |
 | Required permission | Authenticated principal. |
 | Path/query/body | None. |
-| Success | `200 OK`; only server-resolved user/organization context and non-secret role/capability data. |
+| Success | `200 OK`; only server-resolved `identityPrincipalId`, `organizationId`, `membershipId`, and non-secret `Role`/capability data. |
 | Errors | `401`, `403`, `500`. |
-| Validation | Never return authentication proof, signing material, provider/service credentials, or another user's data. |
+| Validation | Never return authentication proof, signing material, provider/service credentials, or another principal's data. The identity principal may hold memberships in multiple organizations, but this response shows only the server-selected current organization and membership context. Organization selection/switching is an unresolved open contract decision; it is not a client-controlled organization-switch mechanism. |
 | Traceability | SRS-AUTH-002, SRS-AUTH-005, SRS-AUTHZ-002; UC-001. |
 
 ```json
 {
   "data": {
-    "userId": "11111111-1111-4111-8111-111111111111",
+    "identityPrincipalId": "11111111-1111-4111-8111-111111111111",
+    "organizationId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "membershipId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     "displayName": "Demo Employee",
     "roles": ["employee"],
-    "capabilities": ["tickets:create", "tickets:read:own"]
+    "capabilities": ["support-requests:create", "support-requests:read:own"]
   },
   "meta": {
     "correlationId": "c0a80123-4567-489a-9abc-123456789abc"
@@ -254,51 +265,53 @@ Validation errors do not retry. Authorization/policy denials are not retryable. 
 }
 ```
 
-## 12. User API Contracts
+The example represents one server-resolved current organization and membership context. An `IdentityPrincipal` may have memberships in multiple organizations. Selection or switching of the current organization is not defined by this contract and must not be implemented as a client-controlled organization or membership authority.
 
-### GET `/api/v1/users`
+## 12. Identity and Organization Membership API Contracts
+
+### GET `/api/v1/organization-memberships`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | List users visible to an authorized organization-scoped reviewer/analyst for support workflow use. |
+| Purpose | List organization actors visible to an authorized organization-scoped reviewer or analyst. |
 | Authentication | Required. |
-| Required permission | Explicit organization-scoped user-directory read; exact role mapping is policy configuration. |
+| Required permission | Explicit organization-scoped membership-directory read; exact role mapping is policy configuration. |
 | Path parameters | None. |
 | Query parameters | `limit`, `cursor`, optional `status`; see Section 23. |
 | Request body | None. |
-| Success | `200 OK`, paginated minimal user profiles. |
+| Success | `200 OK`, paginated minimal membership profiles. |
 | Errors | `400`, `401`, `403`, `429`, `500`. |
-| Validation | Organization filter is never accepted from client; email and unnecessary profile fields are omitted unless specifically authorized. |
+| Validation | Organization context is derived from the trusted server context; email and unnecessary principal/external identity fields are omitted. |
 | Traceability | SRS-AUTH-005, SRS-AUTHZ-002–003, SRS-TEN-001–002; UC-001, UC-012. |
 
-### GET `/api/v1/users/{userId}`
+### GET `/api/v1/organization-memberships/{membershipId}`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | Read a user profile within the caller's permitted organization and user scope. |
+| Purpose | Read an organization membership within the caller's permitted organization and membership scope. |
 | Authentication | Required. |
-| Required permission | Own profile or explicit organization-scoped user-directory read. |
-| Path parameters | `userId`: UUID. |
+| Required permission | Own membership or explicit organization-scoped membership-directory read. |
+| Path parameters | `membershipId`: organization-scoped membership UUID. |
 | Query parameters/body | None. |
-| Success | `200 OK`, minimal profile representation. |
+| Success | `200 OK`, minimal membership representation. |
 | Errors | `400`, `401`, `403` or concealed `404`, `500`. |
-| Validation | UUID syntax; tenant and record authorization on the server. |
+| Validation | Validate UUID syntax and tenant scope; use the membership's organization plus membership key for authorization and disclosure. |
 | Traceability | SRS-AUTH-002, SRS-AUTHZ-002–003, SRS-TEN-002, SRS-API-002; UC-001. |
 
-## 13. Ticket Management API Contracts
+## 13. Support Request API Contracts
 
-All ticket endpoints operate on internal support requests only. No live service-desk API is called.
+All support request endpoints operate on the canonical `SupportRequest` entity. No live service-desk API is called.
 
-### POST `/api/v1/tickets`
+### POST `/api/v1/support-requests`
 
 | Contract field | Definition |
 |---|---|
 | Purpose | Create an organization-scoped internal support request. |
 | Authentication | Required. |
-| Required permission | `tickets:create` or equivalent employee policy. |
+| Required permission | `support-requests:create` or equivalent employee policy. |
 | Path/query | None. |
-| Request body | Required `title`, `description`; do not accept authoritative owner, organization, status, or external ticket ID. |
-| Success | `201 Created`, `Location` to resource; the ticket is persisted and the bounded initial analysis may complete within the answer deadline. Return the accurate SRS workflow outcome and any validated result. |
+| Request body | Required `title`, `description`; do not accept authoritative requester membership, organization, status, external request ID, role, or approval state. |
+| Success | `201 Created`, `Location` to resource; the `SupportRequest` is persisted and the bounded initial analysis may complete within the answer deadline. Return the accurate SRS workflow outcome and any validated result. |
 | Errors | `400`, `401`, `403`, `409` idempotency conflict, `413`, `429`, `500`, `503`. |
 | Validation | Nonblank bounded title/description; reject unknown security-sensitive fields; treat text as untrusted. Persist only after validation. |
 | Traceability | SRS-FR-001–002, SRS-TKT-001, SRS-TEN-001–002, SRS-API-001–002; UC-002. |
@@ -313,7 +326,7 @@ All ticket endpoints operate on internal support requests only. No live service-
 ```json
 {
   "data": {
-    "ticketId": "22222222-2222-4222-8222-222222222222",
+    "requestId": "22222222-2222-4222-8222-222222222222",
     "title": "VPN connection issue",
     "description": "The VPN client disconnects shortly after connecting.",
     "outcomeStatus": "answered",
@@ -337,47 +350,47 @@ All ticket endpoints operate on internal support requests only. No live service-
 }
 ```
 
-If the initial analysis exceeds its deadline after the ticket is persisted, return the actual persisted `failed` or `escalated` state; never claim an answer. `POST /tickets/{ticketId}/analysis` is available for a separately requested/repeated bounded analysis. Any internal initial state must not be presented as a terminal SRS outcome.
+If the initial analysis exceeds its deadline after the support request is persisted, return the actual persisted `failed` or `escalated` state; never claim an answer. `POST /support-requests/{requestId}/analysis` is available for a separately requested/repeated bounded analysis. Any internal initial state must not be presented as a terminal SRS outcome.
 
-### GET `/api/v1/tickets`
+### GET `/api/v1/support-requests`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | List tickets accessible to the caller. |
+| Purpose | List support requests accessible to the caller. |
 | Authentication | Required. |
-| Required permission | Employee own-ticket read or explicit analyst organization-scoped ticket read. |
-| Path/query | Query: `limit`, `cursor`, optional `status`, `sort`; no client authority via `organizationId` or `createdByUserId`. |
+| Required permission | Employee own-request read or explicit analyst organization-scoped request read. |
+| Path/query | Query: `limit`, `cursor`, optional `status`, `sort`; no client authority via `organizationId`, `identityPrincipalId`, or `membershipId`. |
 | Request body | None. |
-| Success | `200 OK`, paginated ticket summaries. |
+| Success | `200 OK`, paginated support request summaries. |
 | Errors | `400`, `401`, `403`, `429`, `500`, `503`. |
 | Validation | Allowlisted status/sort; all filters combined with server-resolved tenant and record scope. |
 | Traceability | SRS-FR-002, SRS-FR-018, SRS-TEN-002, SRS-TKT-002, SRS-API-002; UC-003, UC-011. |
 
-### GET `/api/v1/tickets/{ticketId}`
+### GET `/api/v1/support-requests/{requestId}`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | Retrieve an authorized ticket and permitted response/source metadata. |
+| Purpose | Retrieve an authorized support request and permitted response/source metadata. |
 | Authentication | Required. |
-| Required permission | Ticket owner or explicitly authorized analyst/reviewer. |
-| Path parameters | `ticketId`: UUID. |
+| Required permission | Request owner or explicitly authorized analyst/reviewer. |
+| Path parameters | `requestId`: tenant-owned support request UUID. |
 | Query/body | None. |
-| Success | `200 OK`, ticket representation. |
+| Success | `200 OK`, support request representation. |
 | Errors | `400`, `401`, `403` or concealed `404`, `500`, `503`. |
 | Validation | Validate UUID; check organization and resource permissions before loading/disclosing details. |
 | Traceability | SRS-FR-002–005, SRS-TEN-002, SRS-TKT-002, SRS-API-002; UC-003. |
 
-### PATCH `/api/v1/tickets/{ticketId}`
+### PATCH `/api/v1/support-requests/{requestId}`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | Apply a defined workflow transition; this is the only supported ticket update in MVP. |
+| Purpose | Apply a defined workflow transition; this is the only supported support request update in MVP. |
 | Authentication | Required. |
-| Required permission | Employee escalation on an accessible own ticket, or analyst transition explicitly allowed by workflow policy. |
-| Path parameters | `ticketId`: UUID. |
+| Required permission | Employee escalation on an accessible owned support request, or analyst transition explicitly allowed by workflow policy. |
+| Path parameters | `requestId`: tenant-owned support request UUID. |
 | Query | None. |
 | Request body | Exactly one `outcomeStatus` transition from the allowlisted workflow; no arbitrary field patching. |
-| Success | `200 OK`, persisted current ticket status. |
+| Success | `200 OK`, persisted current support request status. |
 | Errors | `400`, `401`, `403` or concealed `404`, `409` invalid/stale transition, `500`, `503`. |
 | Validation | Reject unsupported statuses and transitions; do not accept AI-only state updates. Persist transition and audit reference before reporting success. |
 | Traceability | SRS-FR-013, SRS-FR-018, SRS-AUTHZ-008, SRS-TKT-002–004, SRS-TKT-007, SRS-DB-006, SRS-ERR-009; UC-011. |
@@ -392,7 +405,7 @@ If the initial analysis exceeds its deadline after the ticket is persisted, retu
 ```json
 {
   "data": {
-    "ticketId": "22222222-2222-4222-8222-222222222222",
+    "requestId": "22222222-2222-4222-8222-222222222222",
     "outcomeStatus": "escalated",
     "updatedAt": "2026-11-13T08:03:00Z"
   },
@@ -404,41 +417,41 @@ If the initial analysis exceeds its deadline after the ticket is persisted, retu
 
 No separate arbitrary status endpoint is defined; the PATCH operation is the constrained status transition contract. Initial/in-progress state names must be fixed as an implementation detail consistent with the SRS outcome set.
 
-## 14. Ticket Comments API Contracts
+## 14. Request Message API Contracts
 
-### GET `/api/v1/tickets/{ticketId}/comments`
+### GET `/api/v1/support-requests/{requestId}/messages`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | List permitted comments for an accessible ticket. |
+| Purpose | List permitted `RequestMessage` rows for an accessible support request. |
 | Authentication | Required. |
-| Required permission | Ticket owner or explicitly authorized analyst. |
-| Path parameters | `ticketId`: UUID. |
-| Query | `limit`, `cursor`, optional `commentType` allowlist. |
+| Required permission | Support request owner or explicitly authorized analyst. |
+| Path parameters | `requestId`: tenant-owned support request UUID. |
+| Query | `limit`, `cursor`, optional `messageKind` allowlist. |
 | Body | None. |
-| Success | `200 OK`, paginated comment entries. |
+| Success | `200 OK`, paginated request message entries. |
 | Errors | `400`, `401`, `403` or concealed `404`, `429`, `500`. |
-| Validation | Tenant/resource check before returning body/source references; AI author attribution is explicit. |
+| Validation | Tenant/resource check before returning body/source references. Author attribution uses the canonical optional `authorMembershipId` for human or analyst authors and omits it for system or AI authors. The canonical `author_kind` vocabulary and public representation remain a contract decision until approved; do not expose an invented author enum. |
 | Traceability | SRS-TKT-002–004, SRS-TEN-002, SRS-AUTHZ-003; UC-003, UC-011. |
 
-### POST `/api/v1/tickets/{ticketId}/comments`
+### POST `/api/v1/support-requests/{requestId}/messages`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | Add an employee clarification/comment or authorized analyst note to an internal support request. |
+| Purpose | Add an employee clarification or authorized analyst note to an internal support request. |
 | Authentication | Required. |
-| Required permission | Ticket owner for user message/clarification; explicit analyst permission for analyst note. |
-| Path parameters | `ticketId`: UUID. |
+| Required permission | Request owner for a member clarification; explicit analyst permission for an analyst note. |
+| Path parameters | `requestId`: tenant-owned support request UUID. |
 | Query | None. |
-| Request body | `body`, `commentType`; author and organization are server-derived. |
-| Success | `201 Created`, persisted comment representation. |
+| Request body | `body`, `messageKind`; author membership and organization are server-derived. The canonical optional `authorMembershipId` is never accepted from the request body. |
+| Success | `201 Created`, persisted request message representation. |
 | Errors | `400`, `401`, `403` or concealed `404`, `409`, `413`, `429`, `500`, `503`. |
-| Validation | Nonblank bounded body; allowed comment types only; reject author/organization/status fields; content is untrusted. |
+| Validation | Nonblank bounded body; allowed message kinds only; reject author, organization, status, and external identity fields; content is untrusted. |
 | Traceability | SRS-AI-007, SRS-TKT-001, SRS-TKT-003–004, SRS-TEN-001–002, SRS-API-002; UC-002, UC-011. |
 
 ```json
 {
-  "commentType": "clarification",
+  "messageKind": "clarification",
   "body": "The issue occurs on the office Wi-Fi network."
 }
 ```
@@ -446,10 +459,10 @@ No separate arbitrary status endpoint is defined; the PATCH operation is the con
 ```json
 {
   "data": {
-    "commentId": "33333333-3333-4333-8333-333333333333",
-    "ticketId": "22222222-2222-4222-8222-222222222222",
-    "authorType": "employee",
-    "commentType": "clarification",
+    "messageId": "33333333-3333-4333-8333-333333333333",
+    "requestId": "22222222-2222-4222-8222-222222222222",
+    "authorMembershipId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "messageKind": "clarification",
     "body": "The issue occurs on the office Wi-Fi network.",
     "createdAt": "2026-11-13T08:04:00Z"
   },
@@ -459,16 +472,16 @@ No separate arbitrary status endpoint is defined; the PATCH operation is the con
 }
 ```
 
-## 15. AI Ticket Analysis API Contracts
+## 15. AI Support Request Analysis API Contracts
 
-### POST `/api/v1/tickets/{ticketId}/analysis`
+### POST `/api/v1/support-requests/{requestId}/analysis`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | Request configured AI analysis for an accessible ticket; returns a run reference and does not expose FastAPI. |
+| Purpose | Request configured AI analysis for an accessible support request; returns a run reference and does not expose FastAPI. |
 | Authentication | Required. |
-| Required permission | Ticket owner or explicitly authorized analyst; backend authorizes analysis. |
-| Path parameters | `ticketId`: UUID. |
+| Required permission | Support request owner or explicitly authorized analyst; backend authorizes analysis. |
+| Path parameters | `requestId`: tenant-owned support request UUID. |
 | Query | None. |
 | Request body | Optional bounded `analysisMode` from configured allowlist and optional `includeTroubleshooting` boolean. No prompt, provider, organization, tool, or authorization override. |
 | Success | `202 Accepted` with persisted `agentRunId`, current run status, and poll URL. |
@@ -487,7 +500,7 @@ No separate arbitrary status endpoint is defined; the PATCH operation is the con
 {
   "data": {
     "agentRunId": "44444444-4444-4444-8444-444444444444",
-    "ticketId": "22222222-2222-4222-8222-222222222222",
+    "requestId": "22222222-2222-4222-8222-222222222222",
     "status": "queued",
     "statusUrl": "/api/v1/agent-runs/44444444-4444-4444-8444-444444444444"
   },
@@ -507,7 +520,7 @@ The exact asynchronous execution mechanism is unresolved; `202` specifies the pu
 |---|---|
 | Purpose | Read current persisted status and validated result of a correlated workflow. |
 | Authentication | Required. |
-| Required permission | Access to the parent ticket and organization; analyst scope may apply. |
+| Required permission | Access to the parent support request and organization; analyst scope may apply. |
 | Path parameters | `agentRunId`: UUID. |
 | Query/body | None. |
 | Success | `200 OK`, run status, timestamps, response semantics, verified eligible source references, optional proposal reference. |
@@ -521,7 +534,7 @@ The exact asynchronous execution mechanism is unresolved; `202` specifies the pu
 |---|---|
 | Purpose | Retrieve permitted, minimized events for a workflow run. |
 | Authentication | Required. |
-| Required permission | Parent ticket access; more detailed agent-event visibility may be restricted to analysts. |
+| Required permission | Parent support request access; more detailed agent-event visibility may be restricted to analysts. |
 | Path parameters | `agentRunId`: UUID. |
 | Query | `limit`, `cursor`, optional allowlisted `eventType`. |
 | Body | None. |
@@ -570,7 +583,7 @@ Knowledge retrieval is permission-aware and server-scoped. Knowledge document li
 |---|---|
 | Purpose | List approved/active curated documents the caller may discover. |
 | Authentication | Required. |
-| Required permission | Authenticated user with permission to view document metadata; admin controls are separate. |
+| Required permission | Authenticated organization membership with permission to view document metadata; platform/organization administration is separate. |
 | Path/query | Query: `limit`, `cursor`, optional `status` restricted to allowed values. |
 | Body | None. |
 | Success | `200 OK`, organization- and permission-filtered document metadata. |
@@ -584,7 +597,7 @@ Knowledge retrieval is permission-aware and server-scoped. Knowledge document li
 |---|---|
 | Purpose | Retrieve authorized document metadata, not arbitrary chunk content. |
 | Authentication | Required. |
-| Required permission | Document visibility under current organization/user access attributes. |
+| Required permission | Document visibility under the current organization membership, role, and grant attributes. |
 | Path parameters | `documentId`: UUID. |
 | Query/body | None. |
 | Success | `200 OK`, permitted metadata and status. |
@@ -719,8 +732,8 @@ The timestamp values illustrate fields only; they do not prescribe an approval v
 |---|---|
 | Purpose | List enabled allow-listed simulated tool summaries visible to the caller. |
 | Authentication | Required. |
-| Required permission | Authenticated user; only tools eligible for their organization/action context are shown. |
-| Path/query | Optional `ticketId` UUID to evaluate display context; server still authorizes. |
+| Required permission | Authenticated active membership; only tools eligible for the current organization/action context are shown. |
+| Path/query | Optional `requestId` UUID to evaluate display context; server still authorizes. |
 | Body | None. |
 | Success | `200 OK`, tool identifiers, descriptions, required approval indicator, simulation label; no executable code/secrets. |
 | Errors | `400`, `401`, `403`, `500`. |
@@ -773,7 +786,7 @@ This success example is valid only after confirmed simulated result, persisted o
 |---|---|
 | Purpose | Retrieve the authoritative stored status/result for a permitted simulated execution. |
 | Authentication | Required. |
-| Required permission | Same organization and permitted ticket/action scope; reviewer/actor policy applies. |
+| Required permission | Same organization and permitted support-request/action scope; reviewer/actor policy applies. |
 | Path parameters | `executionId`: UUID. |
 | Query/body | None. |
 | Success | `200 OK`, status `pending`, `started`, `succeeded`, `failed`, or `unknown` as applicable and simulation label. |
@@ -790,7 +803,7 @@ This success example is valid only after confirmed simulated result, persisted o
 | Purpose | List minimized audit metadata within an authorized review scope. |
 | Authentication | Required. |
 | Required permission | Explicit audit-review permission; organization administrator alone is insufficient. |
-| Query parameters | `limit`, `cursor`, optional `ticketId`, `correlationId`, `eventType`, time bounds. All are scoped to authorized organization. |
+| Query parameters | `limit`, `cursor`, optional `requestId`, `correlationId`, `eventType`, time bounds. All are scoped to the authorized organization. |
 | Body | None. |
 | Success | `200 OK`, paginated event summaries. |
 | Errors | `400`, `401`, `403`, concealed `404`, `429`, `500`, `503`. |
@@ -821,7 +834,7 @@ Example event:
     "actorType": "user",
     "occurredAt": "2026-11-13T08:10:00Z",
     "outcome": "approved",
-    "ticketId": "22222222-2222-4222-8222-222222222222",
+    "requestId": "22222222-2222-4222-8222-222222222222",
     "approvalId": "55555555-5555-4555-8555-555555555555",
     "correlationId": "c0a80123-4567-489a-9abc-123456789abc",
     "metadata": {
@@ -836,21 +849,21 @@ Example event:
 
 ## 21. Reporting API Contracts
 
-Reporting remains bounded to ticket summaries and operational review; no standalone analytics product is introduced.
+Reporting remains bounded to support request summaries and operational review; no standalone analytics product is introduced.
 
-### POST `/api/v1/tickets/{ticketId}/summary`
+### POST `/api/v1/support-requests/{requestId}/summary`
 
 | Contract field | Definition |
 |---|---|
-| Purpose | Ask the bounded Reporting Agent to draft a summary of a ticket the analyst may access. |
+| Purpose | Ask the bounded Reporting Agent to draft a summary of a support request the analyst may access. |
 | Authentication | Required. |
-| Required permission | Analyst ticket-read and summary permission. |
-| Path parameters | `ticketId`: UUID. |
+| Required permission | Analyst support-request read and summary permission. |
+| Path parameters | `requestId`: tenant-owned support request UUID. |
 | Query | None. |
 | Request body | Optional bounded output preference; no external audience or provider override. |
 | Success | `200 OK` with clearly labeled AI-generated summary, or `202 Accepted` with run reference if asynchronous; exact execution mode is open. |
 | Errors | `400`, `401`, `403` or concealed `404`, `429`, `500`, `503`, `504`. |
-| Validation | Authorize before sending minimized context to FastAPI; summary is not ticket state, audit evidence, approval, or verified fact. |
+| Validation | Authorize before sending minimized context to FastAPI; summary is not support request state, audit evidence, approval, or verified fact. |
 | Traceability | SRS-FR-019, SRS-AUTHZ-003, SRS-TKT-004, SRS-AI-001–008, SRS-NFR-003, SRS-REP-005; UC-012. |
 
 ```json
@@ -862,7 +875,7 @@ Example completed result:
 ```json
 {
   "data": {
-    "ticketId": "22222222-2222-4222-8222-222222222222",
+    "requestId": "22222222-2222-4222-8222-222222222222",
     "generatedBy": "ai",
     "summary": "The employee reports repeated VPN disconnections. No eligible source confirmed a specific root cause.",
     "uncertainty": "Root cause not verified.",
@@ -898,7 +911,7 @@ This is a private logical contract, not a public endpoint. The exact private hos
 |---|---|
 | Caller | Spring Boot API only. |
 | Authentication | Private service authentication required by deployment; exact mechanism unresolved. |
-| Required permission | Authenticated Spring Boot service identity under the internal service policy; no user or agent identity can invoke this route directly. |
+| Required permission | Authenticated Spring Boot service identity under the internal service policy; no browser principal or agent identity can invoke this route directly. |
 | Purpose | Execute one configured, bounded LangGraph workflow for analysis, answer, troubleshooting, or summary. |
 | Path parameters | None. |
 | Query parameters | None. |
@@ -976,12 +989,13 @@ There is no AI result callback endpoint in the approved architecture. The initia
 
 ```json
 {
-  "error": {
-    "code": "AI_DEADLINE_EXCEEDED",
-    "message": "The bounded AI workflow did not complete before its deadline.",
-    "correlationId": "c0a80123-4567-489a-9abc-123456789abc",
-    "retryable": false
-  }
+  "timestamp": "2026-11-13T08:05:00Z",
+  "status": 504,
+  "errorCode": "AI_DEADLINE_EXCEEDED",
+  "message": "The bounded AI workflow did not complete before its deadline.",
+  "path": "/api/v1/support-requests/22222222-2222-4222-8222-222222222222/analysis",
+  "correlationId": "c0a80123-4567-489a-9abc-123456789abc",
+  "fieldErrors": []
 }
 ```
 
@@ -993,25 +1007,25 @@ FastAPI must use finite downstream deadlines. A transient, idempotent read may b
 - Return `meta.page.nextCursor` as an opaque cursor; it is not a user/tenant authority token and is bound server-side to the caller scope and filters.
 - Use deterministic server-side ordering, typically newest first (`createdAt`/`occurredAt` descending) with a stable unique-ID tie-breaker.
 - Accept only allowlisted filters and sort fields; reject unknown fields/directions with `400`.
-- Never let `organizationId`, `role`, or `userId` query parameters broaden caller scope. Such filters may narrow an already authorized scope only if the operation's policy permits it.
+- Never let `organizationId`, `membershipId`, `identityPrincipalId`, or role query parameters broaden caller scope. Such filters may narrow an already authorized scope only if the operation's policy permits it.
 - Cursor format, retention, and pagination consistency under concurrent updates are implementation decisions.
 
 ## 24. Validation Rules
 
 1. Validate JSON shape, content type, field lengths, UUIDs, timestamp formats, enumerations, and allowed fields at the API boundary.
 2. Derive actor, organization, role, approval status, request status, and execution authority from trusted server state, never request JSON.
-3. Treat ticket/comment text, knowledge text, model output, candidate citations, action proposals, and tool parameters as untrusted.
+3. Treat support request/message text, knowledge text, model output, candidate citations, action proposals, and tool parameters as untrusted.
 4. Enforce strict tool allow-list and exact schema; reject unknown tool names, extra parameters, malformed values, and any live action.
 5. Apply organization and document permission predicates before returning/forwarding any knowledge content.
 6. Bind approvals to unchanged proposal content and policy context; expiry and current authorization are checked again at execution.
 7. Validate source/citation IDs against retrieved, actually eligible sources before presentation.
-8. Reject sensitive unknown request fields such as `organizationId`, `userId`, `approved`, `policyDecision`, `toolResult`, `providerApiKey`, or `systemPrompt`.
+8. Reject sensitive unknown request fields such as `organizationId`, `identityPrincipalId`, `membershipId`, `approved`, `policyDecision`, `toolResult`, `providerApiKey`, or `systemPrompt`.
 9. Keep validation errors safe and field-specific without echoing sensitive values.
 10. Request body maximums, per-field lengths, knowledge content limits, and rating scale require documented implementation limits; no unapproved bulk-upload limit is implied.
 
 ## 25. Idempotency and Retry Strategy
 
-- Require `Idempotency-Key` for ticket creation, analysis initiation, comment creation, and tool-execution requests where a client/network retry could duplicate state. Approval decisions should be state-idempotent for the same decision but conflicting repeats return `409`.
+- Require `Idempotency-Key` for support request creation, analysis initiation, message creation, and tool-execution requests where a client/network retry could duplicate state. Approval decisions should be state-idempotent for the same decision but conflicting repeats return `409`.
 - Store/reconcile idempotency by authenticated actor, organization, operation, key, and canonical request fingerprint. A key replay with a different body returns `409`.
 - Key retention duration and storage are open implementation decisions; idempotency keys are not authorization tokens.
 - Retry transient idempotent reads at most once and only within the remaining end-to-end deadline. Never retry validation failures, authentication failures, authorization/policy denials, or malformed model output.
@@ -1023,7 +1037,7 @@ FastAPI must use finite downstream deadlines. A transient, idempotent read may b
 - Every public and internal request has a finite timeout. The answer-only MVP end-to-end deadline is no greater than 10 seconds; approval waiting is outside that deadline.
 - Downstream AI/provider timeouts must fit within remaining request budget. Tool timeout is configured but its numeric value remains unresolved.
 - Return accurate `429`, `503`, or `504` errors; include `Retry-After` only when the server can provide a meaningful value.
-- Apply rate limits at the authenticated actor and organization boundary, especially for login, analysis, comments, knowledge management, reporting, and execution. Numeric quotas and implementation point are unresolved.
+- Apply rate limits at the authenticated actor and organization boundary, especially for login, analysis, request messages, knowledge management, reporting, and execution. Numeric quotas and implementation point are unresolved.
 - A timeout never implies an action succeeded. Tool execution status is `unknown` when the result cannot be established; do not blindly repeat.
 - No production throughput, availability SLA, or provider failover is implied.
 
@@ -1032,8 +1046,8 @@ FastAPI must use finite downstream deadlines. A transient, idempotent read may b
 - Public business operations terminate at Spring Boot. The browser never receives internal service credentials or calls FastAPI directly.
 - Authenticate every protected call and enforce role, organization, resource, and action permissions server-side.
 - Fail closed when identity, tenant scope, policy, approval, or required persistence is unavailable.
-- Filter knowledge permissions before AI/model input; source references returned to users are verified against actual eligible rows.
-- LLM output is untrusted. It may recommend or propose; it cannot set ticket status, approve itself, authorize retrieval, or execute a tool.
+- Filter knowledge permissions before AI/model input; source references returned to organization actors are verified against actual eligible rows.
+- LLM output is untrusted. It may recommend or propose; it cannot set support request status, approve itself, authorize retrieval, or execute a tool.
 - Require explicit authorized human approval for every enabled MVP simulated action and revalidate deterministic policy immediately before execution.
 - Permit only allow-listed, schema-validated simulated tool actions; no live integration, production credential, arbitrary shell, network, or database tool exists in MVP.
 - Audit material access/policy, workflow, retrieval references, approvals, decisions, execution attempts/results, and optional configuration changes. Minimize sensitive event content.
@@ -1054,16 +1068,16 @@ FastAPI must use finite downstream deadlines. A transient, idempotent read may b
 
 | API resource/operation | Logical database entities | Important rule |
 |---|---|---|
-| Authentication / profile / users | `User`, `Organization`, `Role`, `UserRole` | No password or secret storage; identity/organization resolved server-side. |
-| Ticket create/list/detail/update | `Ticket`, `User`, `Organization`, `AuditEvent` | Internal request; organization-scoped; only defined transitions may update status. |
-| Ticket comments | `TicketComment`, `Ticket`, `User`, `AuditEvent` | Parent and child tenant IDs match; content treated as untrusted. |
-| AI analysis / run status / events | `AgentDefinition`, `AgentRun`, `AgentEvent`, `Ticket`, `AuditEvent` | Correlated and organization-scoped; only bounded metadata persisted. |
-| Knowledge reads / optional curation | `KnowledgeDocument`, `KnowledgeChunk`, `User`, `AuditEvent` | Filter by organization and permission before candidate content enters AI context. |
-| Approval operations | `ApprovalRequest`, `User`, `ToolDefinition`, `Ticket`, `AuditEvent` | Exact proposal, reviewer, expiry, fingerprint, and policy context; decision is explicit. |
+| Authentication / profile / memberships | `IdentityPrincipal`, `ExternalIdentity`, `Organization`, `OrganizationMembership`, `Role`, `MembershipRole` | Verified issuer/subject resolution; no password or secret storage; organization/actor context derived server-side. |
+| Support request create/list/detail/update | `SupportRequest`, `OrganizationMembership`, `Organization`, `AuditEvent` | Tenant-owned request; requester is a same-organization membership; only defined transitions may update status. |
+| Request messages | `RequestMessage`, `SupportRequest`, `OrganizationMembership`, `AuditEvent` | Parent and child organization IDs match; author is a membership or null for system/AI; content is untrusted. |
+| AI analysis / run status / events | `AgentDefinition`, `AgentRun`, `AgentEvent`, `SupportRequest`, `AuditEvent` | Correlated and organization-scoped; only bounded metadata persisted. |
+| Knowledge reads / optional curation | `KnowledgeDocument`, `KnowledgeChunk`, `OrganizationMembership`, `AuditEvent` | Filter by organization and permission before candidate content enters AI context. |
+| Approval operations | `ApprovalRequest`, `OrganizationMembership`, `ToolDefinition`, `SupportRequest`, `AuditEvent` | Exact proposal, requester/reviewer membership, expiry, fingerprint, and policy context; decision is explicit. |
 | Simulated tools | `ToolDefinition`, `ApprovalRequest`, `ToolExecution`, `AuditEvent` | Approved, revalidated, allow-listed simulation only; uniqueness/transactions prevent duplicate effects. |
 | Audit reads | `AuditEvent` and typed related entities | Explicit reviewer permission; organization filter; minimized metadata. |
-| Ticket summary and operations reporting | `Ticket`, `AgentRun`, `AgentEvent`, `AuditEvent`, optional `Feedback` | Summary is AI-generated; analytics scoped/minimized; no standalone analytics product. |
-| Optional feedback | `Feedback`, `Ticket`, `AgentRun`, `User` | MVP-Should; no authorization effect. |
+| Support request summary and operations reporting | `SupportRequest`, `AgentRun`, `AgentEvent`, `AuditEvent`, optional `ResponseFeedback` | Summary is AI-generated; analytics are scoped/minimized; no standalone analytics product. |
+| Optional feedback | `ResponseFeedback`, `RequestMessage`, `SupportRequest`, `AgentRun`, `OrganizationMembership` | MVP-Should; no authorization effect. |
 
 MariaDB 10.11.16 is the relational source of truth. Knowledge Agent retrieval is not selected; any search service is subordinate to backend authorization and must return only currently eligible candidate content. MariaDB JSON fields follow the Database ER document's bounded schemas and secret-exclusion rules.
 
@@ -1072,8 +1086,8 @@ MariaDB 10.11.16 is the relational source of truth. Knowledge Agent retrieval is
 | API area | Related SRS requirement families | Related Use Cases |
 |---|---|---|
 | Authentication/profile | SRS-AUTH-001–SRS-AUTH-006; SRS-AUTHZ-001–SRS-AUTHZ-002; SRS-API-002; SRS-ERR-002 | UC-001 |
-| Users | SRS-AUTH-002, SRS-AUTH-005; SRS-AUTHZ-002–SRS-AUTHZ-003; SRS-TEN-001–SRS-TEN-002; SRS-API-002 | UC-001, UC-012 |
-| Tickets/comments | SRS-FR-001–SRS-FR-002, SRS-FR-018; SRS-TKT-001–SRS-TKT-007; SRS-TEN-001–SRS-TEN-002; SRS-AI-007; SRS-DB-004, SRS-DB-006; SRS-ERR-001, SRS-ERR-009 | UC-002, UC-003, UC-011 |
+| Identity principals/memberships | SRS-AUTH-002, SRS-AUTH-005; SRS-AUTHZ-002–SRS-AUTHZ-003; SRS-TEN-001–SRS-TEN-002; SRS-API-002 | UC-001, UC-012 |
+| Support requests/messages | SRS-FR-001–SRS-FR-002, SRS-FR-018; SRS-TKT-001–SRS-TKT-007; SRS-TEN-001–SRS-TEN-002; SRS-AI-007; SRS-DB-004, SRS-DB-006; SRS-ERR-001, SRS-ERR-009 | UC-002, UC-003, UC-011 |
 | Analysis and agent runs | SRS-FR-006, SRS-FR-019–SRS-FR-020; SRS-AI-001–SRS-AI-009; SRS-API-004–SRS-API-005, SRS-API-009; SRS-NFR-005, SRS-NFR-015–SRS-NFR-017; SRS-ERR-004–SRS-ERR-006 | UC-004, UC-006, UC-007 |
 | Knowledge | SRS-FR-003, SRS-FR-015, SRS-FR-017; SRS-RAG-001–SRS-RAG-009; SRS-TEN-002–SRS-TEN-004; SRS-DB-001–SRS-DB-004; SRS-SEC-004 | UC-005, UC-014 |
 | Approval | SRS-FR-009–SRS-FR-011, SRS-FR-014; SRS-HITL-001–SRS-HITL-009; SRS-AUTHZ-004, SRS-AUTHZ-008–SRS-AUTHZ-009; SRS-AUD-001–SRS-AUD-002, SRS-AUD-009; SRS-ERR-008–SRS-ERR-009 | UC-008, UC-009 |
@@ -1089,40 +1103,40 @@ Endpoint-level requirement and use-case references appear on each contract. Trac
 
 These are illustrative JSON representations for contracts whose request/response behavior is described in the endpoint tables. Every example uses the common envelope in Section 9. A `204` response has no JSON body.
 
-**GET `/api/v1/users`**
+**GET `/api/v1/organization-memberships`**
 
 ```json
-{"data":[{"userId":"11111111-1111-4111-8111-111111111111","displayName":"Demo Employee","roles":["employee"]}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
+{"data":[{"membershipId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","identityPrincipalId":"11111111-1111-4111-8111-111111111111","displayName":"Demo Employee","roles":["employee"]}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
 ```
 
-**GET `/api/v1/users/{userId}`**
+**GET `/api/v1/organization-memberships/{membershipId}`**
 
 ```json
-{"data":{"userId":"11111111-1111-4111-8111-111111111111","displayName":"Demo Employee","roles":["employee"]},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
+{"data":{"membershipId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","identityPrincipalId":"11111111-1111-4111-8111-111111111111","displayName":"Demo Employee","roles":["employee"]},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
 ```
 
-**GET `/api/v1/tickets`**
+**GET `/api/v1/support-requests`**
 
 ```json
-{"data":[{"ticketId":"22222222-2222-4222-8222-222222222222","title":"VPN connection issue","outcomeStatus":"answered","createdAt":"2026-11-13T07:55:00Z"}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
+{"data":[{"requestId":"22222222-2222-4222-8222-222222222222","title":"VPN connection issue","outcomeStatus":"answered","createdAt":"2026-11-13T07:55:00Z"}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
 ```
 
-**GET `/api/v1/tickets/{ticketId}`**
+**GET `/api/v1/support-requests/{requestId}`**
 
 ```json
-{"data":{"ticketId":"22222222-2222-4222-8222-222222222222","title":"VPN connection issue","description":"The VPN client disconnects shortly after connecting.","outcomeStatus":"answered","createdAt":"2026-11-13T07:55:00Z","updatedAt":"2026-11-13T08:00:00Z"},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
+{"data":{"requestId":"22222222-2222-4222-8222-222222222222","title":"VPN connection issue","description":"The VPN client disconnects shortly after connecting.","outcomeStatus":"answered","createdAt":"2026-11-13T07:55:00Z","updatedAt":"2026-11-13T08:00:00Z"},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
 ```
 
-**GET `/api/v1/tickets/{ticketId}/comments`**
+**GET `/api/v1/support-requests/{requestId}/messages`**
 
 ```json
-{"data":[{"commentId":"33333333-3333-4333-8333-333333333333","authorType":"ai","commentType":"response","body":"The request may relate to an unstable network connection.","createdAt":"2026-11-13T08:00:00Z"}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
+{"data":[{"messageId":"33333333-3333-4333-8333-333333333333","messageKind":"response","body":"The request may relate to an unstable network connection.","createdAt":"2026-11-13T08:00:00Z"}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
 ```
 
 **GET `/api/v1/agent-runs/{agentRunId}`**
 
 ```json
-{"data":{"agentRunId":"44444444-4444-4444-8444-444444444444","ticketId":"22222222-2222-4222-8222-222222222222","status":"completed","completedAt":"2026-11-13T08:00:00Z","recommendation":{"summary":"The request may relate to an unstable network connection.","facts":[],"suggestions":[],"uncertainty":"Root cause not verified."},"policyDecision":null,"humanDecision":null,"toolResult":null},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
+{"data":{"agentRunId":"44444444-4444-4444-8444-444444444444","requestId":"22222222-2222-4222-8222-222222222222","status":"completed","completedAt":"2026-11-13T08:00:00Z","recommendation":{"summary":"The request may relate to an unstable network connection.","facts":[],"suggestions":[],"uncertainty":"Root cause not verified."},"policyDecision":null,"humanDecision":null,"toolResult":null},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
 ```
 
 **GET `/api/v1/agent-runs/{agentRunId}/events`**
@@ -1146,13 +1160,13 @@ These are illustrative JSON representations for contracts whose request/response
 **GET `/api/v1/approvals`**
 
 ```json
-{"data":[{"approvalId":"55555555-5555-4555-8555-555555555555","ticketId":"22222222-2222-4222-8222-222222222222","decisionStatus":"pending","toolKey":"mock_access_request","simulated":true,"requestedAt":"2026-11-13T08:05:00Z"}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
+{"data":[{"approvalId":"55555555-5555-4555-8555-555555555555","requestId":"22222222-2222-4222-8222-222222222222","decisionStatus":"pending","toolKey":"mock_access_request","simulated":true,"requestedAt":"2026-11-13T08:05:00Z"}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
 ```
 
 **GET `/api/v1/approvals/{approvalId}`**
 
 ```json
-{"data":{"approvalId":"55555555-5555-4555-8555-555555555555","ticketId":"22222222-2222-4222-8222-222222222222","decisionStatus":"pending","proposedAction":{"toolKey":"mock_access_request","parameters":{"requestType":"demo"},"expectedEffect":"Record a simulated request only"},"simulated":true,"expiresAt":"2026-11-13T08:20:00Z"},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
+{"data":{"approvalId":"55555555-5555-4555-8555-555555555555","requestId":"22222222-2222-4222-8222-222222222222","decisionStatus":"pending","proposedAction":{"toolKey":"mock_access_request","parameters":{"requestType":"demo"},"expectedEffect":"Record a simulated request only"},"simulated":true,"expiresAt":"2026-11-13T08:20:00Z"},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
 ```
 
 **POST `/api/v1/approvals/{approvalId}/reject`**
@@ -1176,13 +1190,13 @@ These are illustrative JSON representations for contracts whose request/response
 **GET `/api/v1/audit-events`**
 
 ```json
-{"data":[{"eventId":"77777777-7777-4777-8777-777777777777","eventType":"approval.decision","occurredAt":"2026-11-13T08:10:00Z","outcome":"approved","ticketId":"22222222-2222-4222-8222-222222222222","correlationId":"c0a80123-4567-489a-9abc-123456789abc"}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
+{"data":[{"eventId":"77777777-7777-4777-8777-777777777777","eventType":"approval.decision","occurredAt":"2026-11-13T08:10:00Z","outcome":"approved","requestId":"22222222-2222-4222-8222-222222222222","correlationId":"c0a80123-4567-489a-9abc-123456789abc"}],"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc","page":{"limit":20,"nextCursor":null}}}
 ```
 
 **GET `/api/v1/audit-events/{eventId}`**
 
 ```json
-{"data":{"eventId":"77777777-7777-4777-8777-777777777777","eventType":"approval.decision","actorType":"user","occurredAt":"2026-11-13T08:10:00Z","outcome":"approved","ticketId":"22222222-2222-4222-8222-222222222222","approvalId":"55555555-5555-4555-8555-555555555555","correlationId":"c0a80123-4567-489a-9abc-123456789abc","metadata":{}},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
+{"data":{"eventId":"77777777-7777-4777-8777-777777777777","eventType":"approval.decision","actorKind":"MEMBERSHIP","occurredAt":"2026-11-13T08:10:00Z","outcome":"approved","requestId":"22222222-2222-4222-8222-222222222222","approvalId":"55555555-5555-4555-8555-555555555555","correlationId":"c0a80123-4567-489a-9abc-123456789abc","metadata":{}},"meta":{"correlationId":"c0a80123-4567-489a-9abc-123456789abc"}}
 ```
 
 **GET `/api/v1/reports/operations`**
@@ -1198,14 +1212,15 @@ The analytics example is illustrative only; any reported metric requires a docum
 1. Authentication protocol, identity provider, demo credential shape, bearer/cookie/session mechanism, issuer/claims, logout semantics, and token/session lifecycle.
 2. Public/internal hostnames, HTTPS termination, gateway/routing, FastAPI service identity, internal authentication, and transport protection.
 3. Exact endpoint naming/versioning approval, content negotiation, ETag/conditional update strategy, and correlation-ID format.
-4. Whether ticket analysis and summary are synchronous or asynchronous, and if asynchronous, the implementation mechanism. No callback endpoint or message broker is currently defined.
-5. Initial/processing ticket and agent status vocabulary, while preserving required user-visible outcomes.
+4. Whether support request analysis and summary are synchronous or asynchronous, and if asynchronous, the implementation mechanism. No callback endpoint or message broker is currently defined.
+5. Initial/processing support request and agent status vocabulary, while preserving required user-visible outcomes.
 6. Exact request/response schema versions, field-size limits, pagination cursor implementation, and error-code catalog.
 7. Rate-limit quotas, request-size limits, idempotency-key retention, and per-service timeout values; answer-only deadline remains bounded by the SRS maximum of 10 seconds.
 8. LLM provider/model and provider data terms. No provider is selected, no provider-specific public fields are exposed, and non-synthetic organizational data requires review.
-9. Whether optional organization-level knowledge/role/action administration and feedback are enabled. Feedback remains MVP-Should; binary upload/bulk ingestion is not defined.
+9. Whether optional organization-level knowledge/role/action administration and `ResponseFeedback` are enabled. `ResponseFeedback` remains MVP-Should; binary upload/bulk ingestion is not defined.
 10. Tool execution response mode (synchronous `200` or asynchronous `202`) and recovery for ambiguous simulation outcomes.
 11. Exact RBAC role names, permissions, audit review policy, privacy thresholds, and external observability integration.
 12. Retention and deletion policies for API records and provider-bound content, to be resolved before real employee data is processed.
+13. How a principal with memberships in multiple organizations selects or switches the trusted current organization context. No client-controlled organization or membership-switching mechanism is currently specified.
 
 Decisions must remain consistent with the approved PRD, SRS, threat model, architecture, sequence diagrams, and database model. None may create a direct AI authorization path, remove required human approval, or introduce live integrations into the MVP.
